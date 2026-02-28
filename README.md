@@ -42,4 +42,4 @@ python -m grapevine_mcp
 
 ## License
 
-MIT
+Business Source License 1.1 (BSL-1.1) — see [LICENSE](LICENSE) for details.

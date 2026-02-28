@@ -6,7 +6,7 @@ authors = [
     {name = "Michael Ikemann", email = "michael.ikemann@gmail.com"}
 ]
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "BSL-1.1"}
 requires-python = ">=3.12,<4.0"
 keywords = [
     "staffbase",
@@ -18,7 +18,7 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
