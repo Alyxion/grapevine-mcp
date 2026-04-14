@@ -11,6 +11,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from grapevine_mcp.staffbase_adapter import StaffbaseAdapter, create_adapter
 from grapevine_mcp.staffbase_client import StaffbaseClient
 
 logger = logging.getLogger(__name__)
@@ -110,18 +111,18 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Client singleton
+# Adapter singleton
 # ---------------------------------------------------------------------------
 
+_client: StaffbaseClient | None = None
+_adapter: StaffbaseAdapter | None = None
 
-def _get_client() -> StaffbaseClient:
-    base_url = os.environ.get("STAFFBASE_URL", "")
-    api_key = os.environ.get("STAFFBASE_API_KEY", "")
-    if not base_url or not api_key:
-        raise RuntimeError(
-            "STAFFBASE_URL and STAFFBASE_API_KEY environment variables are required."
-        )
-    return StaffbaseClient(base_url=base_url, api_key=api_key)
+
+def _get_adapter() -> tuple[StaffbaseClient, StaffbaseAdapter]:
+    global _client, _adapter
+    if _adapter is None:
+        _client, _adapter = create_adapter()
+    return _client, _adapter
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +131,7 @@ def _get_client() -> StaffbaseClient:
 
 
 async def _handle_tool(name: str, arguments: dict[str, Any]) -> str:
-    client = _get_client()
+    client, adapter = _get_adapter()
 
     if name == "list_spaces":
         spaces = await client.list_spaces()
@@ -141,42 +142,41 @@ async def _handle_tool(name: str, arguments: dict[str, Any]) -> str:
         channel_id = arguments.get("channel_id")
         limit = arguments.get("limit", 10)
         if channel_id:
-            data = await client.get_channel_posts(channel_id, limit=limit)
-            posts = data.get("data", data) if isinstance(data, dict) else data
+            articles = await adapter.get_channel_articles(channel_id, limit=limit)
         else:
-            posts = await client.get_global_posts(limit=limit)
-        result = []
-        for p in posts[:limit] if isinstance(posts, list) else []:
-            contents = p.get("contents", {})
-            # Pick first available locale
-            locale = next(iter(contents), None)
-            localized = contents.get(locale, {}) if locale else {}
-            result.append({
-                "id": p.get("id", ""),
-                "title": localized.get("title", ""),
-                "teaser": localized.get("teaser", "")[:200],
-                "published": p.get("publishedAt", ""),
-                "locale": locale or "",
-            })
+            articles = await adapter.get_global_articles(limit=limit)
+        result = [
+            {
+                "id": a.id,
+                "title": a.title,
+                "teaser": a.teaser,
+                "published": a.published_label,
+                "locale": a.locale,
+            }
+            for a in articles
+        ]
         return json.dumps(result, indent=2)
 
     elif name == "list_channels":
         space_id = arguments["space_id"]
-        news = await client.get_space_news(space_id)
-        channels = _extract_channels(news)
-        return json.dumps(channels, indent=2)
+        channels = await adapter.discover_channels(space_id)
+        result = [
+            {"name": ch.name, "installation_id": ch.installation_id}
+            for ch in channels
+        ]
+        return json.dumps(result, indent=2)
 
     elif name == "get_page":
         page_id = arguments["page_id"]
         page = await client.get_page(page_id)
         contents = page.get("contents", {})
-        locale = next(iter(contents), None)
-        localized = contents.get(locale, {}) if locale else {}
+        localized = adapter.resolve_locale(contents)
+        locale = adapter._detect_locale(contents, localized)
         return json.dumps({
             "id": page.get("id", ""),
             "title": localized.get("title", ""),
             "content": localized.get("content", "")[:5000],
-            "locale": locale or "",
+            "locale": locale,
             "updated": page.get("updatedAt", ""),
         }, indent=2)
 
@@ -188,28 +188,6 @@ async def _handle_tool(name: str, arguments: dict[str, Any]) -> str:
 
     else:
         return json.dumps({"error": f"Unknown tool: {name}"})
-
-
-def _extract_channels(
-    items: list[dict[str, Any]], result: list[dict[str, Any]] | None = None
-) -> list[dict[str, Any]]:
-    """Recursively extract news channels from the space news tree."""
-    if result is None:
-        result = []
-    for item in items:
-        if item.get("type") == "news":
-            contents = item.get("contents", {})
-            locale = next(iter(contents), None)
-            title = contents.get(locale, {}).get("title", "") if locale else ""
-            result.append({
-                "name": title or item.get("title", ""),
-                "installation_id": item.get("installationID", item.get("id", "")),
-            })
-        # Recurse into children (folders)
-        children = item.get("children", [])
-        if children:
-            _extract_channels(children, result)
-    return result
 
 
 # ---------------------------------------------------------------------------
